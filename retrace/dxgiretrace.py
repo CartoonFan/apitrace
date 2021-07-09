@@ -80,6 +80,14 @@ class D3DRetracer(Retracer):
                 print(r'        Flags &= ~D3D10_CREATE_DEVICE_DEBUG;')
                 print(r'    }')
 
+                # D3D10CreateDevice(D3D10_DRIVER_TYPE_REFERENCE) fails with
+                # DXGI_ERROR_UNSUPPORTED on 64bits.
+                print(r'#ifdef _WIN64')
+                print(r'    if (DriverType == D3D10_DRIVER_TYPE_REFERENCE) {')
+                print(r'        DriverType = D3D10_DRIVER_TYPE_WARP;')
+                print(r'    }')
+                print(r'#endif')
+
                 # Force driver
                 self.forceDriver('D3D10_DRIVER_TYPE_HARDWARE')
 
@@ -98,23 +106,6 @@ class D3DRetracer(Retracer):
                 self.forceDriver('D3D_DRIVER_TYPE_UNKNOWN')
 
         Retracer.invokeFunction(self, function)
-
-        if function.name in self.createDeviceFunctionNames:
-            print(r'''
-    if (retrace::driver != retrace::DRIVER_DEFAULT &&
-        ppDevice && *ppDevice) {
-        com_ptr<IDXGIDevice> pDXGIDevice;
-        HRESULT hr = (*ppDevice)->QueryInterface(IID_IDXGIDevice, (void **)&pDXGIDevice);
-        assert(SUCCEEDED(hr));
-        com_ptr<IDXGIAdapter> pDXGIAdapter;
-        hr = pDXGIDevice->GetAdapter(&pDXGIAdapter);
-        assert(SUCCEEDED(hr));
-        DXGI_ADAPTER_DESC AdapterDesc;
-        hr = pDXGIAdapter->GetDesc(&AdapterDesc);
-        assert(SUCCEEDED(hr));
-        std::wcerr << L"info: using " << AdapterDesc.Description << std::endl;
-    }
-''')
 
     def doInvokeFunction(self, function):
         Retracer.doInvokeFunction(self, function)
@@ -139,17 +130,7 @@ class D3DRetracer(Retracer):
         # Catch when device is removed, and report the reason.
         if interface is not None:
             print(r'        if (_result == DXGI_ERROR_DEVICE_REMOVED) {')
-            getDeviceRemovedReasonMethod = interface.getMethodByName("GetDeviceRemovedReason")
-            if getDeviceRemovedReasonMethod is not None:
-                print(r'            HRESULT _reason = _this->GetDeviceRemovedReason();')
-                print(r'            retrace::failed(call, _reason);')
-            getDeviceMethod = interface.getMethodByName("GetDevice")
-            if getDeviceMethod is not None and len(getDeviceMethod.args) == 1:
-                print(r'            com_ptr<%s> _pDevice;' % getDeviceMethod.args[0].type.type.type)
-                print(r'            _this->GetDevice(&_pDevice);')
-                print(r'            HRESULT _reason = _pDevice->GetDeviceRemovedReason();')
-                print(r'            retrace::failed(call, _reason);')
-            print(r'            exit(EXIT_FAILURE);')
+            print(r'            d3dretrace::deviceRemoved(call, _this);')
             print(r'        }')
 
         Retracer.handleFailure(self, interface, methodOrFunction)
@@ -157,15 +138,19 @@ class D3DRetracer(Retracer):
     def forceDriver(self, driverType):
         # This can only work when pAdapter is NULL. For non-NULL pAdapter we
         # need to override inside the EnumAdapters call below
-        print(r'    com_ptr<IDXGIFactory1> _pFactory;')
-        print(r'    com_ptr<IDXGIAdapter> _pAdapter;')
+        print(r'    ComPtr<IDXGIFactory1> _pFactory;')
+        print(r'    ComPtr<IDXGIAdapter> _pAdapter;')
         print(r'    if (pAdapter == nullptr && retrace::driver != retrace::DRIVER_DEFAULT) {')
-        print(r'        _result = CreateDXGIFactory1(IID_IDXGIFactory1, (void **)&_pFactory);')
+        print(r'        _result = CreateDXGIFactory1(IID_IDXGIFactory1, &_pFactory);')
         print(r'        assert(SUCCEEDED(_result));')
-        print(r'        _result = d3dretrace::createAdapter(_pFactory, IID_IDXGIAdapter1, (void **)&_pAdapter);')
-        print(r'        pAdapter = _pAdapter;')
+        print(r'        _result = d3dretrace::createAdapter(_pFactory.Get(), IID_IDXGIAdapter1, &_pAdapter);')
+        print(r'        pAdapter = _pAdapter.Get();')
         print(r'        DriverType = %s;' % driverType)
-        print(r'        Software = NULL;')
+        print(r'        Software = nullptr;')
+        print(r'    }')
+        print(r'    if (Software) {')
+        print(r'        Software = LoadLibraryA("d3d10warp.dll");')
+        print(r'        assert(Software != nullptr);')
         print(r'    }')
 
     def doInvokeInterfaceMethod(self, interface, method):
@@ -271,6 +256,17 @@ class D3DRetracer(Retracer):
             print(r'    _result = _this->CreateSwapChainForHwnd(pDevice, hWnd, pDesc, NULL, pRestrictToOutput, ppSwapChain);')
             self.checkResult(interface, method)
             return
+        if method.name == 'CreateSwapChainForCompositionSurfaceHandle':
+            print(r'    ComPtr<IDXGIFactory2> pFactory;')
+            print(r'    _result = _this->QueryInterface(IID_IDXGIFactory2, &pFactory);')
+            print(r'    assert(SUCCEEDED(_result));')
+            print(r'    HWND hWnd = d3dretrace::createWindow(pDesc->Width, pDesc->Height);')
+            print(r'    pDesc->Flags &= ~DXGI_SWAP_CHAIN_FLAG_FULLSCREEN_VIDEO;')
+            print(r'    _result = pFactory->CreateSwapChainForHwnd(pDevice, hWnd, pDesc, NULL, pRestrictToOutput, ppSwapChain);')
+            self.checkResult(interface, method)
+            return
+        if method.name == 'ResizeBuffers':
+            print(r'    SwapChainFlags &= ~DXGI_SWAP_CHAIN_FLAG_FULLSCREEN_VIDEO;')
         if method.name == 'CreateTargetForHwnd':
             print(r'    hwnd = d3dretrace::createWindow(1024, 768);')
 
@@ -286,10 +282,13 @@ class D3DRetracer(Retracer):
 
         # notify frame has been completed
         if interface.name.startswith('IDXGISwapChain') and method.name.startswith('Present'):
+            # Reset _DO_NOT_WAIT flags. Otherwise they may fail, and we have no
+            # way to cope with it (other than retry).
+            print(r'    Flags &= ~DXGI_PRESENT_DO_NOT_WAIT;')
             if interface.name.startswith('IDXGISwapChainDWM'):
-                print(r'    com_ptr<IDXGISwapChain> pSwapChain;')
-                print(r'    if (SUCCEEDED(_this->QueryInterface(IID_IDXGISwapChain, (void **) &pSwapChain))) {')
-                print(r'        dxgiDumper.bindDevice(pSwapChain);')
+                print(r'    ComPtr<IDXGISwapChain> pSwapChain;')
+                print(r'    if (SUCCEEDED(_this->QueryInterface(IID_IDXGISwapChain, &pSwapChain))) {')
+                print(r'        dxgiDumper.bindDevice(pSwapChain.Get());')
                 print(r'    } else {')
                 print(r'        assert(0);')
                 print(r'    }')
@@ -360,7 +359,7 @@ class D3DRetracer(Retracer):
             print(r'    }')
 
         if method.name == 'GetData':
-            print(r'    pData = _allocator.alloc(DataSize);')
+            print(r'    pData = DataSize ? _allocator.alloc(DataSize) : nullptr;')
             print(r'    do {')
             self.doInvokeInterfaceMethod(interface, method)
             print(r'        GetDataFlags = 0; // Prevent infinite loop')
@@ -368,32 +367,12 @@ class D3DRetracer(Retracer):
             self.checkResult(interface, method)
             print(r'    return;')
 
-        if method.name in ('CreateTexture1D', 'CreateTexture2D', 'CreateTexture3D', 'CreateBuffer'):
-            # We don't capture multiple processes, so ignore keyed mutexes to avoid deadlocks
-            print(r'    if (pDesc->MiscFlags & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX) {')
-            print(r'        pDesc->MiscFlags &= ~D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;')
-            print(r'        pDesc->MiscFlags |= D3D11_RESOURCE_MISC_SHARED;')
-            print(r'    }')
-
-        if method.name == 'ReleaseSync':
-            # We must flush the device that used this surface, as per
-            # https://docs.microsoft.com/en-us/windows/win32/api/d3d10/nf-d3d10-id3d10device-opensharedresource
-            print(r'''
-    com_ptr<ID3D11DeviceChild> pDeviceChild;
-    com_ptr<ID3D11Device> pDevice;
-    com_ptr<ID3D11DeviceContext> pDeviceContext;
-    HRESULT hr = _this->QueryInterface(IID_ID3D11DeviceChild, (void **)&pDeviceChild);
-    if (SUCCEEDED(hr)) {
-        pDeviceChild->GetDevice(&pDevice);
-        pDevice->GetImmediateContext(&pDeviceContext);
-        pDeviceContext->Flush();
-    } else {
-        retrace::warning(call) << "ReleaseSync without D3D11 device\n";
-    }
-    (void)Key;
-    (void)_result;
-''')
-            return
+        # We don't capture multiple processes, so don't wait keyed mutexes to
+        # avoid deadlocks.  However it's important to try honouring the
+        # IDXGIKeyedMutex interfaces so that single processes using multiple
+        # contexts work reliably, by ensuring pending commands get flushed.
+        if method.name == 'AcquireSync':
+            print(r'    dwMilliseconds = 0;')
 
         Retracer.invokeInterfaceMethod(self, interface, method)
 
@@ -506,6 +485,15 @@ class D3DRetracer(Retracer):
             print(r'        }')
             print(r'    }')
 
+    def checkResult(self, interface, methodOrFunction):
+        if interface is not None and interface.name == 'IDXGIKeyedMutex' and methodOrFunction.name == 'AcquireSync':
+            print(r'    if (_result != S_OK) {')
+            print(r'        retrace::failed(call, _result);')
+            self.handleFailure(interface, methodOrFunction)
+            print(r'    }')
+            return
+
+        return Retracer.checkResult(self, interface, methodOrFunction)
 
     def extractArg(self, function, arg, arg_type, lvalue, rvalue):
         # Set object names

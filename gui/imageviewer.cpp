@@ -9,10 +9,12 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QScrollBar>
+#include <QSettings>
 
 ImageViewer::ImageViewer(QWidget *parent, bool opaque, bool alpha)
     : QDialog(parent),
-      m_image(0)
+      m_image(0),
+      m_zoomtoFit()
 {
     setupUi(this);
     opaqueCheckBox->setChecked(opaque);
@@ -43,19 +45,41 @@ ImageViewer::ImageViewer(QWidget *parent, bool opaque, bool alpha)
     scrollAreaWidgetContents->setPalette(pal);
 
     m_pixelWidget = new PixelWidget(scrollAreaWidgetContents);
+    verticalLayout_2->setAlignment(Qt::AlignCenter);
     verticalLayout_2->addWidget(m_pixelWidget);
 
     rectLabel->hide();
     pixelLabel->hide();
 
-    connect(m_pixelWidget, SIGNAL(zoomChanged(int)),
-            zoomSpinBox, SLOT(setValue(int)));
-    connect(zoomSpinBox, SIGNAL(valueChanged(int)),
-            m_pixelWidget, SLOT(setZoom(int)));
+    connect(m_pixelWidget, SIGNAL(zoomChanged(double)),
+            this, SLOT(zoomChangedIndirectly(double)));
+    connect(zoomSpinBox, SIGNAL(valueChanged(double)),
+            this, SLOT(zoomChangedDirectly()));
+    connect(zoomSpinBox, SIGNAL(valueChanged(double)),
+            m_pixelWidget, SLOT(setZoom(double)));
     connect(m_pixelWidget, SIGNAL(mousePosition(int, int)),
             this, SLOT(showPixel(int, int)));
     connect(m_pixelWidget, SIGNAL(gridGeometry(const QRect &)),
             this, SLOT(showGrid(const QRect &)));
+    connect(m_pixelWidget, SIGNAL(zoomStepUp()),
+            this, SLOT(zoomChangedDirectly()));
+    connect(m_pixelWidget, SIGNAL(zoomStepUp()),
+            zoomSpinBox, SLOT(stepUp()));
+    connect(m_pixelWidget, SIGNAL(zoomStepDown()),
+            this, SLOT(zoomChangedDirectly()));
+    connect(m_pixelWidget, SIGNAL(zoomStepDown()),
+            zoomSpinBox, SLOT(stepDown()));
+    connect(zoomToFitCheckBox, SIGNAL(stateChanged(int)),
+            this, SLOT(zoomToFitChanged(int)));
+
+    const auto zoomToFit = QSettings().value("imageViewerZoomToFit");
+    if (!zoomToFit.isNull()) {
+        zoomToFitCheckBox->setChecked(zoomToFit.toBool());
+    }
+
+    m_zoomtoFit = zoomToFitCheckBox->checkState() == Qt::Checked;
+
+    m_pixelWidget->setFocus();
 }
 
 ImageViewer::~ImageViewer()
@@ -96,8 +120,6 @@ void ImageViewer::slotUpdate()
 
 QSize ImageViewer::sizeHint() const
 {
-    QSize size;
-
     int vScrollWidth = scrollArea->verticalScrollBar() ?
                 scrollArea->verticalScrollBar()->width() : 0;
     int hScrollHeight = scrollArea->horizontalScrollBar() ?
@@ -116,6 +138,10 @@ QSize ImageViewer::sizeHint() const
 
 void ImageViewer::resizeEvent(QResizeEvent *e)
 {
+    if (m_zoomtoFit) {
+        zoomToFit();
+    }
+
     QWidget::resizeEvent(e);
 }
 
@@ -184,4 +210,41 @@ void ImageViewer::showGrid(const QRect &rect)
     rectLabel->show();
 }
 
-#include "imageviewer.moc"
+void ImageViewer::zoomChangedDirectly()
+{
+    m_zoomtoFit = false;
+}
+
+void ImageViewer::zoomChangedIndirectly(double zoom)
+{
+    zoomSpinBox->blockSignals(true);
+    zoomSpinBox->setValue(zoom);
+    zoomSpinBox->blockSignals(false);
+}
+
+void ImageViewer::zoomToFitChanged(int state)
+{
+    const auto newZoomtoFit = state == Qt::Checked;
+
+    if (m_zoomtoFit != newZoomtoFit) {
+        m_zoomtoFit = newZoomtoFit;
+        if (m_zoomtoFit) {
+            zoomToFit();
+        }
+    }
+
+    QSettings().setValue("imageViewerZoomToFit", newZoomtoFit);
+}
+
+void ImageViewer::zoomToFit()
+{
+    int left, top, right, bottom;
+    verticalLayout_2->getContentsMargins(&left, &top, &right, &bottom);
+
+    const int w = scrollArea->width() - left - right - 2 * scrollArea->frameWidth();
+    const int h = scrollArea->height() - top - bottom - 2 * scrollArea->frameWidth();
+    const int iw = m_convertedImage.width();
+    const int ih = m_convertedImage.height();
+
+    m_pixelWidget->setZoom(std::min(w / (double)iw, h / (double)ih), false);
+}

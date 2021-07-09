@@ -149,6 +149,7 @@ class GlTracer(Tracer):
         print('#include "gltrace.hpp"')
         print('#include "gltrace_arrays.hpp"')
         print('#include "glmemshadow.hpp"')
+        print('#include "gltrace_unpack_compressed.hpp"')
         print()
 
         # Whether we need user arrays
@@ -209,7 +210,7 @@ class GlTracer(Tracer):
             if function.name in self.fake_function_names:
                 print(function.prototype('_fake_' + function.name) + ';')
         print()
-        print(r'static inline void')
+        print(r'inline void')
         print(r'_fakeStringMarker(const std::string &s) {')
         print(r'    _fake_glStringMarkerGREMEDY(s.length(), s.data());')
         print(r'}')
@@ -408,7 +409,7 @@ class GlTracer(Tracer):
             print('        static bool warned = false;')
             print('        if (!warned) {')
             print('            warned = true;')
-            print('            os::log("apitrace: warning: %s: call will be faked due to pointer to user memory (https://github.com/apitrace/apitrace/blob/master/docs/BUGS.markdown#tracing)\\n", __FUNCTION__);')
+            print('            os::log("apitrace: warning: %s: call will be faked due to pointer to user memory (https://git.io/JOMRv)\\n", __FUNCTION__);')
             print('        }')
             print('        gltrace::Context *_ctx = gltrace::getContext();')
             print('        _ctx->user_arrays = true;')
@@ -466,7 +467,7 @@ class GlTracer(Tracer):
                 print(r'            GLint _size = 0;')
                 print(r'            _%s(%s%s, &_size);' % (getter, extraArg, pname))
                 print(r'            if (_size != GL_BGRA) {')
-                print(r'                os::log("apitrace: warning: %s(%s) does not return GL_BGRA; trace will be incorrect (https://github.com/apitrace/apitrace/issues/261)\n");' % (getter, pname))
+                print(r'                os::log("apitrace: warning: %s(%s) does not return GL_BGRA; trace will be incorrect (https://git.io/JOM0n)\n");' % (getter, pname))
                 print(r'            }')
                 print(r'            _checked = true;')
                 print(r'        }')
@@ -525,7 +526,7 @@ class GlTracer(Tracer):
         if function.name.startswith('glArrayElement'):
             print(r'    gltrace::Context *_ctx = gltrace::getContext();')
             print(r'    if (_ctx->userArraysOnBegin) {')
-            print(r'        os::log("apitrace: warning: user arrays with glArrayElement not supported (https://github.com/apitrace/apitrace/issues/276)\n");')
+            print(r'        os::log("apitrace: warning: user arrays with glArrayElement not supported (https://git.io/JOM0l)\n");')
             print(r'        _ctx->userArraysOnBegin = false;')
             print(r'    }')
         
@@ -978,6 +979,8 @@ class GlTracer(Tracer):
         r'(Compressed)?(Multi)?Tex(ture)?(Sub)?Image[1-4]D',
     ]) + r')[0-9A-Z]*$')
 
+    compressed_image_function_regex = re.compile(r'^glCompressedTex(ture)?(Sub)?Image[1-4]D[0-9A-Z]*$')
+
     def serializeArgValue(self, function, arg):
         # Recognize offsets instead of blobs when a PBO is bound
         if self.unpack_function_regex.match(function.name) \
@@ -992,7 +995,10 @@ class GlTracer(Tracer):
             print('        if (_unpack_buffer) {')
             print('            trace::localWriter.writePointer((uintptr_t)%s);' % arg.name)
             print('        } else {')
-            Tracer.serializeArgValue(self, function, arg)
+            if self.compressed_image_function_regex.match(function.name):
+                print('            %s;' % arg.type.size.format('[](const void* data, GLsizei size){ trace::localWriter.writeBlob(data, size); }'))
+            else:
+                Tracer.serializeArgValue(self, function, arg)
             print('        }')
             print('    }')
             return

@@ -132,6 +132,9 @@ getCurrentContext(void) {
 int
 parseAttrib(const trace::Value *attribs, int param, int default_ = 0, int terminator = 0);
 
+void
+setSamples(trace::Call& call, int samples);
+
 glfeatures::Profile
 parseContextAttribList(const trace::Value *attribs);
 
@@ -164,6 +167,9 @@ checkGlError(trace::Call &call);
 
 void
 insertCallMarker(trace::Call &call, Context *currentContext);
+
+int64_t
+getCurrentTime(void);
 
 void
 mapResourceLocation(GLuint program, GLenum programInterface,

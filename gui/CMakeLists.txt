@@ -13,10 +13,13 @@ add_library (qubjson STATIC
     qubjson.cpp
 )
 
-add_gtest (qubjson_test qubjson_test.cpp)
-target_link_libraries (qubjson_test qubjson)
+if (BUILD_TESTING)
+    add_gtest (qubjson_test qubjson_test.cpp)
+    target_link_libraries (qubjson_test qubjson)
+endif ()
 
 set(qapitrace_SRCS
+   adaptivedoublespinbox.cpp
    apisurface.cpp
    apitrace.cpp
    apicalldelegate.cpp
@@ -113,8 +116,6 @@ target_link_libraries (qapitrace
     qubjson
     image
     common
-    ${ZLIB_LIBRARIES}
-    ${SNAPPY_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
 )
 

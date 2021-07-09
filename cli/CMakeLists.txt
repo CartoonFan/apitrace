@@ -27,6 +27,7 @@ add_executable (apitrace
     cli_leaks.cpp
     cli_dump.cpp
     cli_dump_images.cpp
+    cli_gltrim.cpp
     cli_pager.cpp
     cli_pickle.cpp
     cli_repack.cpp
@@ -40,10 +41,9 @@ add_executable (apitrace
 
 target_link_libraries (apitrace
     common
-    brotli_dec brotli_enc brotli_common
-    ${ZLIB_LIBRARIES}
-    ${SNAPPY_LIBRARIES}
-    ${GETOPT_LIBRARIES}
+    PkgConfig::BROTLIDEC
+    PkgConfig::BROTLIENC
+    getopt
     ${CMAKE_DL_LIBS}
 )
 

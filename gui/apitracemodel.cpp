@@ -9,7 +9,6 @@
 #include <QImage>
 #include <QVariant>
 
-
 ApiTraceModel::ApiTraceModel(QObject *parent)
     : QAbstractItemModel(parent),
       m_trace(0)
@@ -416,5 +415,3 @@ void ApiTraceModel::endLoadingFrame(ApiTraceFrame *frame)
 
     m_loadingFrames.remove(frame);
 }
-
-#include "apitracemodel.moc"

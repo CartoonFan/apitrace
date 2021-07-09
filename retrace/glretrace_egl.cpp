@@ -146,6 +146,9 @@ static void retrace_eglChooseConfig(trace::Call &call) {
         }
     }
 
+    if (parseAttrib(attrib_array, EGL_SAMPLE_BUFFERS))
+        profile.samples = parseAttrib(attrib_array, EGL_SAMPLES);
+
     unsigned num_config = num_config_ptr->values[0]->toUInt();
     for (unsigned i = 0; i < num_config; ++i) {
         unsigned long long orig_config = config_array->values[i]->toUIntPtr();
@@ -280,11 +283,19 @@ static void retrace_eglSwapBuffers(trace::Call &call) {
     } else {
         glFlush();
     }
+
+    if (retrace::profilingFrameTimes) {
+        // Wait for presentation to finish
+        glFinish();
+        std::cout << "rendering_finished " << glretrace::getCurrentTime() << std::endl;
+    }
 }
 
 const retrace::Entry glretrace::egl_callbacks[] = {
     {"eglGetError", &retrace::ignore},
     {"eglGetDisplay", &retrace::ignore},
+    {"eglGetPlatformDisplay", &retrace::ignore},
+    {"eglGetPlatformDisplayEXT", &retrace::ignore},
     {"eglInitialize", &retrace::ignore},
     {"eglTerminate", &retrace::ignore},
     {"eglQueryString", &retrace::ignore},

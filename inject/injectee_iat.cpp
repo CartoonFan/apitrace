@@ -42,6 +42,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <intrin.h>
 
 #include <algorithm>
 #include <set>
@@ -79,22 +80,6 @@ debugPrintf(const char *format, ...)
     va_end(ap);
 
     OutputDebugStringA(buf);
-}
-
-
-EXTERN_C void
-_assert(const char *_Message, const char *_File, unsigned _Line)
-{
-    debugPrintf("Assertion failed: %s, file %s, line %u\n", _Message, _File, _Line);
-    TerminateProcess(GetCurrentProcess(), 1);
-}
-
-
-EXTERN_C void
-_wassert(const wchar_t * _Message, const wchar_t *_File, unsigned _Line)
-{
-    debugPrintf("Assertion failed: %S, file %S, line %u\n", _Message, _File, _Line);
-    TerminateProcess(GetCurrentProcess(), 1);
 }
 
 
@@ -640,7 +625,7 @@ patchFunction(HMODULE hModule,
 
 
 
-struct StrCompare : public std::binary_function<const char *, const char *, bool> {
+struct StrCompare {
     bool operator() (const char * s1, const char * s2) const {
         return strcmp(s1, s2) < 0;
     }
@@ -648,7 +633,7 @@ struct StrCompare : public std::binary_function<const char *, const char *, bool
 
 typedef std::map<const char *, LPVOID, StrCompare> FunctionMap;
 
-struct StrICompare : public std::binary_function<const char *, const char *, bool> {
+struct StrICompare  {
     bool operator() (const char * s1, const char * s2) const {
         return stricmp(s1, s2) < 0;
     }
@@ -781,7 +766,9 @@ patchModule(HMODULE hModule,
         stricmp(szBaseName, "AcLayers.dll") == 0 ||
         stricmp(szBaseName, "ConEmuHk.dll") == 0 ||
         stricmp(szBaseName, "gameoverlayrenderer.dll") == 0 ||
-        stricmp(szBaseName, "gameoverlayrenderer64.dll") == 0) {
+        stricmp(szBaseName, "gameoverlayrenderer64.dll") == 0 ||
+        stricmp(szBaseName, "nvoglv32.dll") == 0 ||
+        stricmp(szBaseName, "nvoglv64.dll") == 0) {
         return;
     }
 
@@ -864,8 +851,11 @@ MyLoadLibraryA(LPCSTR lpLibFileName)
             if (VERBOSITY < 2) {
                 debugPrintf("inject: intercepting %s(\"%s\")\n", __FUNCTION__, lpLibFileName);
             }
-#ifdef __GNUC__
-            void *caller = __builtin_return_address (0);
+#ifdef _MSC_VER
+            void *caller = _ReturnAddress();
+#else
+            void *caller = __builtin_return_address(0);
+#endif
 
             HMODULE hModule = 0;
             BOOL bRet = GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
@@ -877,7 +867,6 @@ MyLoadLibraryA(LPCSTR lpLibFileName)
             DWORD dwRet = GetModuleFileNameA(hModule, szCaller, sizeof szCaller);
             assert(dwRet);
             debugPrintf("inject: called from %s\n", szCaller);
-#endif
         }
     }
 
@@ -951,22 +940,52 @@ adjustFlags(DWORD dwFlags)
 static HMODULE WINAPI
 MyLoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
 {
+    BOOL bIntercept = (dwFlags & (DONT_RESOLVE_DLL_REFERENCES |
+                                  LOAD_LIBRARY_AS_DATAFILE |
+                                  LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE)) == 0;
+    HMODULE hTestModule = nullptr;
+    BOOL bLoaded = FALSE;
+
+    /*
+     * XXX: GDI's DescribePixelFormat does
+     *
+     *   HMODULE hModule = LoadLibraryExA("OPENGL32", 0, 0)
+     *   GetProcAddress(hModule, "wglDescribePixelFormat")
+     *   MyFreeLibrary(hModule)
+     *
+     * And GLFW3 calls it for every existing pixel format, and we end up
+     * spending an eternity inside Tool Help Library functions.  To avoid this,
+     * we try to detect when loading an existing library and do nothing.
+     *
+     * TODO: Extend this to the other LoadLibrary* entrypoints.
+     */
+
+    if (bIntercept) {
+        bLoaded = GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                     lpLibFileName,
+                                     &hTestModule);
+    }
+
     HMODULE hModule = LoadLibraryExA(lpLibFileName, hFile, adjustFlags(dwFlags));
-    DWORD dwLastError = GetLastError();
+
+    if (bLoaded && hModule == hTestModule) {
+        bIntercept = FALSE;
+    }
 
     if (VERBOSITY >= 2) {
-        debugPrintf("inject: intercepting %s(\"%s\", 0x%p, 0x%lx) = 0x%p\n",
-                    __FUNCTION__ + 2, lpLibFileName, hFile, dwFlags, hModule);
+        debugPrintf("inject: %s %s(\"%s\", 0x%p, 0x%lx) = 0x%p\n",
+                    bIntercept ? "intercepting" : "ignoring",
+                    __FUNCTION__ + 2,
+                    lpLibFileName, hFile, dwFlags, hModule);
     }
 
     // Hook all new modules (and not just this one, to pick up any dependencies)
-    if ((dwFlags & (DONT_RESOLVE_DLL_REFERENCES |
-                    LOAD_LIBRARY_AS_DATAFILE |
-                    LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE)) == 0) {
+    if (bIntercept) {
+        DWORD dwLastError = GetLastError();
         patchAllModules(ACTION_HOOK);
+        SetLastError(dwLastError);
     }
 
-    SetLastError(dwLastError);
     return hModule;
 }
 
@@ -996,9 +1015,9 @@ MyLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
 static void
 logGetProcAddress(HMODULE hModule, LPCSTR lpProcName) {
     if (HIWORD(lpProcName) == 0) {
-        debugPrintf("inject: intercepting %s(%u)\n", "GetProcAddress", LOWORD(lpProcName));
+        debugPrintf("inject: intercepting %s(0x%p, %u)\n", "GetProcAddress", hModule, LOWORD(lpProcName));
     } else {
-        debugPrintf("inject: intercepting %s(\"%s\")\n", "GetProcAddress", lpProcName);
+        debugPrintf("inject: intercepting %s(0x%p, \"%s\")\n", "GetProcAddress", hModule, lpProcName);
     }
 }
 
@@ -1075,36 +1094,54 @@ MyGetProcAddress(HMODULE hModule, LPCSTR lpProcName) {
 static BOOL WINAPI
 MyFreeLibrary(HMODULE hModule)
 {
-    if (VERBOSITY >= 2) {
-        debugPrintf("inject: intercepting %s(0x%p)\n", __FUNCTION__, hModule);
-    }
-
     BOOL bRet = FreeLibrary(hModule);
-    DWORD dwLastError = GetLastError();
 
-    std::set<HMODULE> hCurrentModules;
-    HANDLE hModuleSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
-    if (hModuleSnap != INVALID_HANDLE_VALUE) {
-        MODULEENTRY32 me32;
-        me32.dwSize = sizeof me32;
-        if (Module32First(hModuleSnap, &me32)) {
-            do  {
-                hCurrentModules.insert(me32.hModule);
-            } while (Module32Next(hModuleSnap, &me32));
+    BOOL bIntercept = bRet;
+    HMODULE hTestModule = nullptr;
+    if (bRet) {
+        if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                              GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                              (LPCTSTR)hModule,
+                              &hTestModule) &&
+            hModule == hTestModule) {
+            bIntercept = FALSE;
         }
-        CloseHandle(hModuleSnap);
     }
 
-    // Clear the modules that have been freed
-    EnterCriticalSection(&g_Mutex);
-    std::set<HMODULE> hIntersectedModules;
-    std::set_intersection(g_hHookedModules.begin(), g_hHookedModules.end(),
-                          hCurrentModules.begin(), hCurrentModules.end(),
-                          std::inserter(hIntersectedModules, hIntersectedModules.begin()));
-    g_hHookedModules = std::move(hIntersectedModules);
-    LeaveCriticalSection(&g_Mutex);
+    if (VERBOSITY >= 2) {
+        debugPrintf("inject: %s %s(0x%p)\n",
+                    bIntercept ? "intercepting" : "ignoring",
+                    __FUNCTION__ + 2, hModule);
+    }
 
-    SetLastError(dwLastError);
+    if (bIntercept) {
+        DWORD dwLastError = GetLastError();
+
+        std::set<HMODULE> hCurrentModules;
+        HANDLE hModuleSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
+        if (hModuleSnap != INVALID_HANDLE_VALUE) {
+            MODULEENTRY32 me32;
+            me32.dwSize = sizeof me32;
+            if (Module32First(hModuleSnap, &me32)) {
+                do  {
+                    hCurrentModules.insert(me32.hModule);
+                } while (Module32Next(hModuleSnap, &me32));
+            }
+            CloseHandle(hModuleSnap);
+        }
+
+        // Clear the modules that have been freed
+        EnterCriticalSection(&g_Mutex);
+        std::set<HMODULE> hIntersectedModules;
+        std::set_intersection(g_hHookedModules.begin(), g_hHookedModules.end(),
+                              hCurrentModules.begin(), hCurrentModules.end(),
+                              std::inserter(hIntersectedModules, hIntersectedModules.begin()));
+        g_hHookedModules = std::move(hIntersectedModules);
+        LeaveCriticalSection(&g_Mutex);
+
+        SetLastError(dwLastError);
+    }
+
     return bRet;
 }
 

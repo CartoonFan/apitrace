@@ -398,7 +398,7 @@ DWORD_TIMEOUT = FakeEnum(DWORD, [
 ])
 
 IDXGIKeyedMutex.methods += [
-    StdMethod(HRESULT, "AcquireSync", [(UINT64, "Key"), (DWORD_TIMEOUT, "dwMilliseconds")], sideeffects=False),
+    StdMethod(HRESULT, "AcquireSync", [(UINT64, "Key"), (DWORD_TIMEOUT, "dwMilliseconds")]),
     StdMethod(HRESULT, "ReleaseSync", [(UINT64, "Key")]),
 ]
 
@@ -542,12 +542,15 @@ dxgi.addInterfaces([
     IDXGIResource,
 ])
 dxgi.addFunctions([
+    StdFunction(BOOL, "CompatValue", [(LPCSTR, 'pValueName'), Out(Pointer(UINT64), 'pValue')], sideeffects=False),
     StdFunction(HRESULT, "CreateDXGIFactory", [(REFIID, "riid"), Out(Pointer(ObjPointer(Void)), "ppFactory")]),
     StdFunction(HRESULT, "CreateDXGIFactory1", [(REFIID, "riid"), Out(Pointer(ObjPointer(Void)), "ppFactory")]),
     StdFunction(HRESULT, "DXGID3D10CreateDevice", [(HMODULE, "hModule"), (ObjPointer(IDXGIFactory), "pFactory"), (ObjPointer(IDXGIAdapter), "pAdapter"), (UINT, "Flags"), (OpaquePointer(Const(IUnknown)), "pUnknown"), Out(Pointer(ObjPointer(Void)), "ppDevice")], internal=True),
     StdFunction(HRESULT, "DXGID3D10CreateLayeredDevice", [(UINT), (UINT), (UINT), (UINT), (UINT)], internal=True),
     StdFunction(SIZE_T,  "DXGID3D10GetLayeredDeviceSize", [(OpaqueArray(Const(Void), "NumLayers"), "pLayers"), (UINT, "NumLayers")], internal=True),
     StdFunction(HRESULT, "DXGID3D10RegisterLayers", [(OpaqueArray(Const(Void), "NumLayers"), "pLayers"), (UINT, "NumLayers")], internal=True),
+    StdFunction(HRESULT, "DXGIGetDebugInterface", [(REFIID, 'riid'), Out(Pointer(ObjPointer(Void)), 'ppDebug')]),
+    StdFunction(HRESULT, "DXGIGetDebugInterface1", [(UINT, "Flags"), (REFIID, 'riid'), Out(Pointer(ObjPointer(Void)), 'ppDebug')]),
 ])
 
 

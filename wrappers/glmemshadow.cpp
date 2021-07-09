@@ -49,7 +49,7 @@ static bool sInitialized = false;
 static std::unordered_map<size_t, GLMemoryShadow*> sPages;
 static size_t sPageSize;
 
-static os::mutex mutex;
+static std::mutex mutex;
 
 enum class MemProtection {
 #ifdef _WIN32
@@ -111,16 +111,13 @@ VectoredHandler(PEXCEPTION_POINTERS pExceptionInfo)
         const uintptr_t addr = static_cast<uintptr_t>(pExceptionRecord->ExceptionInformation[1]);
         const size_t page = addr / sPageSize;
 
-        os::unique_lock<os::mutex> lock(mutex);
+        std::unique_lock<std::mutex> lock(mutex);
 
         const auto it = sPages.find(page);
         if (it != sPages.end()) {
             GLMemoryShadow *shadow = it->second;
             shadow->onAddressWrite(addr, page);
             return EXCEPTION_CONTINUE_EXECUTION;
-        } else {
-            os::log("apitrace: error: %s: access violation at non-tracked page\n", __FUNCTION__);
-            os::abort();
         }
     }
 
@@ -129,20 +126,33 @@ VectoredHandler(PEXCEPTION_POINTERS pExceptionInfo)
 
 #else
 
-void PageGuardExceptionHandler(int sig, siginfo_t *si, void *unused) {
+static struct sigaction sPrevSigAction;
+
+void PageGuardExceptionHandler(int sig, siginfo_t *si, void *context) {
     if (sig == SIGSEGV && si->si_code == SEGV_ACCERR) {
         const uintptr_t addr = reinterpret_cast<uintptr_t>(si->si_addr);
         const size_t page = addr / sPageSize;
 
-        os::unique_lock<os::mutex> lock(mutex);
+        std::unique_lock<std::mutex> lock(mutex);
 
         const auto it = sPages.find(page);
         if (it != sPages.end()) {
             GLMemoryShadow *shadow = it->second;
             shadow->onAddressWrite(addr, page);
+            return;
+        }
+    }
+
+    if (sPrevSigAction.sa_flags & SA_SIGINFO) {
+        sPrevSigAction.sa_sigaction(sig, si, context);
+    } else {
+        if (sPrevSigAction.sa_handler == SIG_DFL) {
+            signal(sig, SIG_DFL);
+            raise(sig);
+        } else if (sPrevSigAction.sa_handler == SIG_IGN) {
+            // Ignore
         } else {
-            os::log("apitrace: error: %s: access violation at non-tracked page\n", __FUNCTION__);
-            os::abort();
+            sPrevSigAction.sa_handler(sig);
         }
     }
 }
@@ -157,11 +167,11 @@ void initializeGlobals()
         os::log("apitrace: error: %s: add vectored exception handler failed\n", __FUNCTION__);
     }
 #else
-    struct sigaction sa, oldSa;
+    struct sigaction sa;
     sa.sa_flags = SA_SIGINFO;
     sigemptyset(&sa.sa_mask);
     sa.sa_sigaction = PageGuardExceptionHandler;
-    if (sigaction(SIGSEGV, &sa, &oldSa) == -1) {
+    if (sigaction(SIGSEGV, &sa, &sPrevSigAction) == -1) {
         os::log("apitrace: error: %s: set page guard exception handler failed\n", __FUNCTION__);
     }
 #endif
@@ -169,7 +179,7 @@ void initializeGlobals()
 
 GLMemoryShadow::~GLMemoryShadow()
 {
-    os::unique_lock<os::mutex> lock(mutex);
+    std::unique_lock<std::mutex> lock(mutex);
 
     const size_t startPage = reinterpret_cast<uintptr_t>(shadowMemory) / sPageSize;
     for (size_t i = 0; i < nPages; i++) {
@@ -211,7 +221,7 @@ bool GLMemoryShadow::init(const void *data, size_t size)
     memProtect(shadowMemory, adjustedSize, MemProtection::NO_ACCESS);
 
     {
-        os::unique_lock<os::mutex> lock(mutex);
+        std::unique_lock<std::mutex> lock(mutex);
 
         const size_t startPage = reinterpret_cast<uintptr_t>(shadowMemory) / sPageSize;
         for (size_t i = 0; i < nPages; i++) {
@@ -253,12 +263,12 @@ void *GLMemoryShadow::map(gltrace::Context *_ctx, void *_glMemory, GLbitfield _f
 void GLMemoryShadow::unmap(Callback callback)
 {
     if (isDirty) {
-        os::unique_lock<os::mutex> lock(mutex);
+        std::unique_lock<std::mutex> lock(mutex);
         commitWrites(callback);
     }
 
     {
-        os::unique_lock<os::mutex> lock(mutex);
+        std::unique_lock<std::mutex> lock(mutex);
 
         shared_context_res_ptr_t res = sharedRes.lock();
         if (res) {
@@ -397,7 +407,7 @@ void GLMemoryShadow::updateForReads()
 void GLMemoryShadow::commitAllWrites(gltrace::Context *_ctx, Callback callback)
 {
     if (!_ctx->sharedRes->dirtyShadows.empty()) {
-        os::unique_lock<os::mutex> lock(mutex);
+        std::unique_lock<std::mutex> lock(mutex);
 
         for (GLMemoryShadow *memoryShadow : _ctx->sharedRes->dirtyShadows) {
             memoryShadow->commitWrites(callback);
@@ -410,7 +420,7 @@ void GLMemoryShadow::commitAllWrites(gltrace::Context *_ctx, Callback callback)
 void GLMemoryShadow::syncAllForReads(gltrace::Context *_ctx)
 {
     if (!_ctx->sharedRes->bufferToShadowMemory.empty()) {
-        os::unique_lock<os::mutex> lock(mutex);
+        std::unique_lock<std::mutex> lock(mutex);
 
         for (auto& it : _ctx->sharedRes->bufferToShadowMemory) {
             GLMemoryShadow* memoryShadow = it.second.get();

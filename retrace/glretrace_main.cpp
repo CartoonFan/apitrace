@@ -182,7 +182,7 @@ insertCallMarker(trace::Call &call, Context *currentContext)
 }
 
 
-static inline int64_t
+int64_t
 getCurrentTime(void) {
     if (retrace::profilingGpuTimes && supportsTimestamp) {
         /* Get the current GL time without stalling */
@@ -815,11 +815,11 @@ public:
     }
 
     image::Image *
-    getSnapshot(int n) override {
+    getSnapshot(int n, bool backBuffer) override {
         if (!glretrace::getCurrentContext()) {
             return NULL;
         }
-        return glstate::getDrawBufferImage(n);
+        return glstate::getDrawBufferImage(n, backBuffer);
     }
 
     bool

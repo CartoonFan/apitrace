@@ -175,15 +175,17 @@ class GlRetracer(Retracer):
             print(r'        return;')
             print(r'    }')
 
-        # When no query buffer object is bound, glGetQueryObject is a no-op.
+        # When no query buffer object is bound, and we don't request that glGetQueryObject
+        # is run than glGetQueryObject is a no-op.
         if function.name.startswith('glGetQueryObject'):
             print(r'    GLint _query_buffer = 0;')
             print(r'    if (currentContext && currentContext->features().query_buffer_object) {')
             print(r'        glGetIntegerv(GL_QUERY_BUFFER_BINDING, &_query_buffer);')
             print(r'    }')
-            print(r'    if (!_query_buffer) {')
+            print(r'    if (!_query_buffer && retrace::queryHandling == retrace::QUERY_SKIP) {')
             print(r'        return;')
             print(r'    }')
+            print(r'wait_for_query_result:')
 
         # Pre-snapshots
         if self.bind_framebuffer_function_regex.match(function.name):
@@ -195,6 +197,26 @@ class GlRetracer(Retracer):
             return
 
         Retracer.retraceFunctionBody(self, function)
+
+        # If we have a query buffer or if we execute the query we have to loop until the
+        # query result is actually available to get the proper result - for the following
+        # execution if the query buffer is used or for the check to make sense, and if we
+        # just want to execute the query for timing purpouses we also should wait
+        # for the result.
+        if function.name.startswith('glGetQueryObject'):
+           print(r'    if (!_query_buffer && retrace::queryHandling != retrace::QUERY_SKIP) {')
+           print(r'        auto query_result = call.arg(2).toArray();')
+           print(r'        assert(query_result && query_result->values.size() == 1);')
+           print(r'        auto expect = static_cast<decltype(retval)>(query_result->values[0]->toUInt());')
+           print(r'        if (call.arg(1).toUInt() == GL_QUERY_RESULT_AVAILABLE) {')
+           print(r'            if (expect == 1 && retval == 0)')
+           print(r'                goto wait_for_query_result;')
+           print(r'        } else if (retrace::queryHandling == retrace::QUERY_RUN_AND_CHECK_RESULT &&')
+           print(r'                   abs(static_cast<int64_t>(expect) - static_cast<int64_t>(retval)) > retrace::queryTolerance) {')
+           print(r'           retrace::warning(call) << "Warning: query returned " << retval << " but trace contained " << expect')
+           print(r'                                  << " (tol = " << retrace::queryTolerance << ")\n";')
+           print(r'        }')
+           print(r'    }')
 
         # Post-snapshots
         if function.name in ('glFlush', 'glFinish'):
@@ -294,7 +316,7 @@ class GlRetracer(Retracer):
 
         if function.name.startswith('glCopyImageSubData'):
             print(r'    if (srcTarget == GL_RENDERBUFFER || dstTarget == GL_RENDERBUFFER) {')
-            print(r'        retrace::warning(call) << " renderbuffer targets unsupported (https://github.com/apitrace/apitrace/issues/404)\n";')
+            print(r'        retrace::warning(call) << " renderbuffer targets unsupported (https://git.io/JOMRC)\n";')
             print(r'    }')
 
         is_draw_arrays = self.draw_arrays_function_regex.match(function.name) is not None
@@ -308,17 +330,6 @@ class GlRetracer(Retracer):
             function.name == 'glBegin' or
             function.name.startswith('glDispatchCompute')
         )
-
-        # Keep track of current program/pipeline
-        if function.name in ('glUseProgram', 'glUseProgramObjectARB'):
-            print(r'    if (currentContext) {')
-            print(r'        currentContext->currentUserProgram = call.arg(0).toUInt();')
-            print(r'        currentContext->currentProgram = %s;' % function.args[0].name)
-            print(r'    }')
-        if function.name in ('glBindProgramPipeline', 'glBindProgramPipelineEXT'):
-            print(r'    if (currentContext) {')
-            print(r'        currentContext->currentPipeline = %s;' % function.args[0].name)
-            print(r'    }')
 
         # Only profile if not inside a list as the queries get inserted into list
         if function.name == 'glNewList':
@@ -399,6 +410,24 @@ class GlRetracer(Retracer):
             print(r'    }')
         else:
             Retracer.invokeFunction(self, function)
+
+        # Keep track of current program/pipeline.  Using glGet as opposed to
+        # the call parameter ensures the cached value stays consistent despite
+        # GL errors.  See also https://github.com/apitrace/apitrace/issues/679
+        if function.name in ('glUseProgram'):
+            print(r'    if (currentContext) {')
+            print(r'        currentContext->currentUserProgram = call.arg(0).toUInt();')
+            print(r'        currentContext->currentProgram = _glGetInteger(GL_CURRENT_PROGRAM);')
+            print(r'    }')
+        if function.name in ('glUseProgramObjectARB',):
+            print(r'    if (currentContext) {')
+            print(r'        currentContext->currentUserProgram = call.arg(0).toUInt();')
+            print(r'        currentContext->currentProgram = glGetHandleARB(GL_PROGRAM_OBJECT_ARB);')
+            print(r'    }')
+        if function.name in ('glBindProgramPipeline', 'glBindProgramPipelineEXT'):
+            print(r'    if (currentContext) {')
+            print(r'        currentContext->currentPipeline = pipeline;')
+            print(r'    }')
 
         # Ensure this context flushes before switching to another thread to
         # prevent deadlock.
@@ -553,7 +582,13 @@ class GlRetracer(Retracer):
             print('    %s = static_cast<%s>((%s).toPointer());' % (lvalue, arg_type, rvalue))
             return
         if function.name.startswith('glGetQueryObject') and arg.output:
-            print('    %s = static_cast<%s>((%s).toPointer());' % (lvalue, arg_type, rvalue))
+            pointer_type = "%s" % (arg_type)
+            basetype = pointer_type.split(" ")[0]
+            print('    %s retval;' % (basetype))
+            print('    if (_query_buffer)')
+            print('        %s = static_cast<%s>((%s).toPointer());' % (lvalue, arg_type, rvalue))
+            print('    else')
+            print('        %s = &retval;' % (lvalue))
             return
 
         if (arg.type.depends(glapi.GLlocation) or \

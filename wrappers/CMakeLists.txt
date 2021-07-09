@@ -26,7 +26,7 @@ if (ENABLE_STATIC_LIBSTDCXX)
 endif ()
 
 macro (target_linker_version_script target version_script)
-    if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         # https://sourceware.org/binutils/docs/ld/VERSION.html
         set_property (
             TARGET ${target}
@@ -71,7 +71,6 @@ set (CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Code shared across all APIs
 add_convenience_library (trace
-    assert.cpp
     memtrace.hpp
     memtrace.cpp
 )
@@ -79,7 +78,6 @@ target_link_libraries (trace
     common
     guids
     crc32c
-    ${SNAPPY_LIBRARIES}
 )
 
 # Code shared across all OpenGL variants
@@ -90,6 +88,8 @@ add_convenience_library (gltrace_common
     gltrace_state.cpp
     glmemshadow.hpp
     glmemshadow.cpp
+    gltrace_unpack_compressed.hpp
+    gltrace_unpack_compressed.cpp
 )
 add_dependencies (gltrace_common glproc)
 target_link_libraries (gltrace_common
@@ -335,12 +335,12 @@ if (WIN32)
     )
     add_library (wgltrace MODULE opengl32.def
         wgltrace.cpp
+        glproc_gl.cpp
     )
     add_dependencies (wgltrace glproc)
     target_link_libraries (wgltrace
         gltrace_common
         glproc
-        glproc_gl
     )
     set_target_properties (wgltrace PROPERTIES
         PREFIX ""
@@ -368,6 +368,7 @@ elseif (APPLE)
 
     add_library (cgltrace SHARED
         cgltrace.cpp
+        glproc_gl.cpp
     )
 
     add_dependencies (cgltrace glproc)
@@ -383,7 +384,7 @@ elseif (APPLE)
 
     target_link_libraries (cgltrace
         gltrace_common
-        glproc_gl
+        glproc
         ${CMAKE_THREAD_LIBS_INIT}
         ${CMAKE_DL_LIBS}
     )
@@ -409,6 +410,7 @@ elseif (X11_FOUND)
     add_library (glxtrace SHARED
         glxtrace.cpp
         dlsym.cpp
+        glproc_gl.cpp
     )
 
     add_dependencies (glxtrace glproc)
@@ -420,7 +422,7 @@ elseif (X11_FOUND)
 
     target_link_libraries (glxtrace
         gltrace_common
-        glproc_gl
+        glproc
         ${CMAKE_THREAD_LIBS_INIT}
         ${CMAKE_DL_LIBS}
     )
@@ -452,6 +454,7 @@ if (ENABLE_EGL AND NOT WIN32 AND NOT APPLE)
     add_library (egltrace SHARED
         egltrace.cpp
         dlsym.cpp
+        glproc_egl.cpp
     )
 
     add_dependencies (egltrace glproc)
@@ -465,7 +468,7 @@ if (ENABLE_EGL AND NOT WIN32 AND NOT APPLE)
 
     target_link_libraries (egltrace
         gltrace_common
-        glproc_egl
+        glproc
         ${CMAKE_THREAD_LIBS_INIT}
         ${CMAKE_DL_LIBS}
     )

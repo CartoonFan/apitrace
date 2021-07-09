@@ -2503,6 +2503,7 @@ ID3D11DebugTest.methods += [
 
 d3d11.addInterfaces([
     ID3D11Device1,
+    ID3D11VideoProcessorEnumerator1,
     ID3DUserDefinedAnnotation,
     ID3D11DebugTest,
 ])
@@ -2623,9 +2624,9 @@ D3D11_TEXTURE2D_DESC1 = Struct("D3D11_TEXTURE2D_DESC1", [
     (DXGI_FORMAT, "Format"),
     (DXGI_SAMPLE_DESC, "SampleDesc"),
     (D3D11_USAGE, "Usage"),
-    (UINT, "BindFlags"),
-    (UINT, "CPUAccessFlags"),
-    (UINT, "MiscFlags"),
+    (D3D11_BIND_FLAG, "BindFlags"),
+    (D3D11_CPU_ACCESS_FLAG, "CPUAccessFlags"),
+    (D3D11_RESOURCE_MISC_FLAG, "MiscFlags"),
     (D3D11_TEXTURE_LAYOUT, "TextureLayout"),
 ])
 
@@ -2640,9 +2641,9 @@ D3D11_TEXTURE3D_DESC1 = Struct("D3D11_TEXTURE3D_DESC1", [
     (UINT, "MipLevels"),
     (DXGI_FORMAT, "Format"),
     (D3D11_USAGE, "Usage"),
-    (UINT, "BindFlags"),
-    (UINT, "CPUAccessFlags"),
-    (UINT, "MiscFlags"),
+    (D3D11_BIND_FLAG, "BindFlags"),
+    (D3D11_CPU_ACCESS_FLAG, "CPUAccessFlags"),
+    (D3D11_RESOURCE_MISC_FLAG, "MiscFlags"),
     (D3D11_TEXTURE_LAYOUT, "TextureLayout"),
 ])
 
@@ -2846,8 +2847,8 @@ ID3D11Multithread = Interface('ID3D11Multithread', IUnknown)
 ID3D11VideoContext2 = Interface('ID3D11VideoContext2', ID3D11VideoContext1)
 
 ID3D11Device4.methods += [
-    StdMethod(HRESULT, 'RegisterDeviceRemovedEvent', [(HANDLE, 'hEvent'), Out(Pointer(DWORD), 'pdwCookie')]),
-    StdMethod(Void, 'UnregisterDeviceRemoved', [(DWORD, 'dwCookie')]),
+    StdMethod(HRESULT, 'RegisterDeviceRemovedEvent', [(HANDLE, 'hEvent'), Out(Pointer(DWORD), 'pdwCookie')], sideeffects=False),
+    StdMethod(Void, 'UnregisterDeviceRemoved', [(DWORD, 'dwCookie')], sideeffects=False),
 ]
 
 ID3D11Device5.methods += [

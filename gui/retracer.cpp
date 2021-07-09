@@ -139,7 +139,9 @@ Retracer::Retracer(QObject *parent)
       m_captureCall(0),
       m_profileGpu(false),
       m_profileCpu(false),
-      m_profilePixels(false)
+      m_profilePixels(false),
+      m_queryHandling(0),
+      m_queryCheckThreshold(0)
 {
     qRegisterMetaType<QList<ApiTraceError> >();
 }
@@ -256,6 +258,11 @@ qlonglong Retracer::captureAtCallNumber() const
     return m_captureCall;
 }
 
+void Retracer::setCallsToIgnore(const QList<RetracerCallRange>& callsToIgnore)
+{
+    m_callsToIgnore = callsToIgnore;
+}
+
 bool Retracer::captureState() const
 {
     return m_captureState;
@@ -264,6 +271,26 @@ bool Retracer::captureState() const
 void Retracer::setCaptureState(bool enable)
 {
     m_captureState = enable;
+}
+
+int Retracer::queryHandling()
+{
+    return m_queryHandling;
+}
+
+void Retracer::setQueryHandling(int handling)
+{
+    m_queryHandling = handling;
+}
+
+int Retracer::queryCheckReportThreshold()
+{
+    return m_queryCheckThreshold;
+}
+
+void Retracer::setQueryCheckReportThreshold(int value)
+{
+    m_queryCheckThreshold = value;
 }
 
 bool Retracer::captureThumbnails() const
@@ -394,6 +421,31 @@ void Retracer::run()
         if (m_benchmarking) {
             arguments << QLatin1String("-b");
         }
+    }
+
+    switch (m_queryHandling) {
+    case 1:
+        arguments << QLatin1String("--query-handling");
+        arguments << QLatin1String("run");
+        break;
+    case 2:
+        arguments << QLatin1String("--query-handling");
+        arguments << QLatin1String("check");
+
+        if (m_queryCheckThreshold > 0) {
+            arguments << QLatin1String("--query-tolerance");
+            arguments << QString::number(m_queryCheckThreshold);
+        }
+        break;
+    }
+
+    if (!m_callsToIgnore.empty()) {
+        arguments << QLatin1String("--ignore-calls");
+        QString callsStr("");
+        for (RetracerCallRange& callRange : m_callsToIgnore) {
+            callsStr += QString("%1-%2,").arg(callRange.m_callStartNo).arg(callRange.m_callEndNo);
+        }
+        arguments << callsStr;
     }
 
     arguments << m_fileName;
@@ -581,5 +633,3 @@ void Retracer::run()
 
     emit finished(msg);
 }
-
-#include "retracer.moc"

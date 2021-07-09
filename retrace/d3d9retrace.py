@@ -65,13 +65,14 @@ class D3DRetracer(Retracer):
         if function.name.startswith('Direct3DCreate9'):
             print(r'    // 0: default')
             print(r'    // 1: force discrete')
-            print(r'    // 2/3: force integrated')
+            print(r'    // 2: prefer integrated?')
+            print(r'    // 3: force integrated')
             print(r'    UINT uHybrid = 0;')
             print(r'    if (retrace::driver == retrace::DRIVER_DISCRETE) {')
             print(r'        uHybrid = 1;')
             print(r'    }')
             print(r'    if (retrace::driver == retrace::DRIVER_INTEGRATED) {')
-            print(r'        uHybrid = 2;')
+            print(r'        uHybrid = 3;')
             print(r'    }')
             print(r'    if (uHybrid != 0) {')
             print(r'        HMODULE hD3D9 = LoadLibraryA("D3D9");')
@@ -188,6 +189,8 @@ class D3DRetracer(Retracer):
             print(r'    if (retrace::forceWindowed) {')
             print(r'        pPresentationParameters->Windowed = TRUE;')
             print(r'        pPresentationParameters->FullScreen_RefreshRateInHz = 0;')
+            if method.name == 'CreateDeviceEx':
+                print(r'   pFullscreenDisplayMode = nullptr;')
             if interface.name.startswith('IDirect3D8'):
                 print(r'        pPresentationParameters->FullScreen_PresentationInterval = D3DPRESENT_INTERVAL_DEFAULT;')
             print(r'    }')
