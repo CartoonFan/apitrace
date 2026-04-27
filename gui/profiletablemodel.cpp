@@ -277,8 +277,10 @@ public:
     {
     }
 
-    bool operator()(const ProfileTableRow &p1, const ProfileTableRow &p2) const
+    bool operator()(const ProfileTableRow &lhs, const ProfileTableRow &rhs) const
     {
+        const ProfileTableRow &p1 = (mSortOrder == Qt::DescendingOrder) ? rhs : lhs;
+        const ProfileTableRow &p2 = (mSortOrder == Qt::DescendingOrder) ? lhs : rhs;
         bool result = true;
 
         switch(mSortColumn) {
@@ -308,11 +310,7 @@ public:
             break;
         }
 
-        if (mSortOrder == Qt::DescendingOrder) {
-            return !result;
-        } else {
-            return result;
-        }
+        return result;
     }
 
 private:
