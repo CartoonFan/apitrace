@@ -143,6 +143,16 @@ jobs:
     - name: cmake
       run: ci/build-macos.sh
 
+  # Update https://apitrace.github.io/#download binaries
+  downloads:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    needs: [ubuntu-20_04, ubuntu-arm64-cross, msvc]
+    runs-on: ubuntu-latest
+    steps:
+    - env:
+        GH_TOKEN: ${{ secrets.GH_WORKFLOW_PAT }}
+      run: gh workflow run --repo apitrace/apitrace.github.io static.yml
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs: [ubuntu-20_04, ubuntu-arm64-cross, msvc]
