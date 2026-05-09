@@ -40,16 +40,23 @@ symbol_versions () {
 }
 
 
+if ! docker buildx version
+then
+   echo 'error: docker buildx plugin required (sudo apt install docker-buildx)' 1>&2
+   exit 1
+fi
+
 if [ "$GITHUB_ACTIONS" = true ]
 then
-    # See:
-    # - https://dev.to/dtinth/caching-docker-builds-in-github-actions-which-approach-is-the-fastest-a-research-18ei
-    # - https://github.com/dtinth/github-actions-docker-layer-caching-poc/blob/master/.github/workflows/dockerimage.yml
-    docker pull docker.pkg.github.com/$GITHUB_REPOSITORY/build-cache || true
-    docker build -t $docker_tag --cache-from=docker.pkg.github.com/$GITHUB_REPOSITORY/build-cache -f $source_dir/ci/docker/$distro.Dockerfile $source_dir/ci/docker
-    docker tag $docker_tag docker.pkg.github.com/$GITHUB_REPOSITORY/build-cache && docker push docker.pkg.github.com/$GITHUB_REPOSITORY/build-cache || true
+    # https://docs.docker.com/build/cache/backends/gha/
+    docker buildx build \
+        -t $docker_tag \
+        --cache-from type=gha,scope=$distro \
+        --cache-to type=gha,mode=max,scope=$distro \
+        --load \
+        -f $source_dir/ci/docker/$distro.Dockerfile $source_dir/ci/docker
 else
-    docker build -t $docker_tag -f $source_dir/ci/docker/$distro.Dockerfile $source_dir/ci/docker
+    docker buildx build -t $docker_tag -f $source_dir/ci/docker/$distro.Dockerfile $source_dir/ci/docker
 fi
 
 if [ "$PACKAGE" = "true" ]

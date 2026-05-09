@@ -32,7 +32,8 @@ jobs:
       with:
         fetch-depth: 1
         submodules: recursive
-    - run: echo ${{ secrets.GITHUB_TOKEN }} | docker login docker.pkg.github.com -u $GITHUB_ACTOR --password-stdin
+    - uses: docker/setup-buildx-action@v4
+    - uses: crazy-max/ghaction-github-runtime@v4
     - run: ci/build-ubuntu32.sh
 
   ubuntu64-clang:
@@ -62,7 +63,8 @@ jobs:
       with:
         fetch-depth: 1
         submodules: recursive
-    - run: echo ${{ secrets.GITHUB_TOKEN }} | docker login docker.pkg.github.com -u $GITHUB_ACTOR --password-stdin
+    - uses: docker/setup-buildx-action@v4
+    - uses: crazy-max/ghaction-github-runtime@v4
     - run: ci/build-ubuntu-20.04.sh
     - if: env.PACKAGE == 'true'
       uses: actions/upload-artifact@v4
@@ -80,7 +82,8 @@ jobs:
       with:
         fetch-depth: 1
         submodules: recursive
-    - run: echo ${{ secrets.GITHUB_TOKEN }} | docker login docker.pkg.github.com -u $GITHUB_ACTOR --password-stdin
+    - uses: docker/setup-buildx-action@v4
+    - uses: crazy-max/ghaction-github-runtime@v4
     - run: ci/build-ubuntu-arm64-cross.sh
     - if: env.PACKAGE == 'true'
       uses: actions/upload-artifact@v4
