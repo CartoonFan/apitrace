@@ -11,13 +11,17 @@ Requirements common for all platforms:
 
   * Python Image Library
 
-* CMake version 3.8 or newer
+* CMake version 3.15 or newer
 
 Optional dependencies:
 
 * zlib 1.2.6 or higher
 
 * libpng
+
+* brottli
+
+* zstd
 
 The GUI also dependends on:
 
